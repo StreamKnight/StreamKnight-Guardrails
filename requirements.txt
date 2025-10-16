@@ -1,0 +1,7 @@
+google-generativeai
+anyio
+trio
+mcp
+python-dotenv
+openai
+websockets
