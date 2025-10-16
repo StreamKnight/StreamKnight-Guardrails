@@ -87,18 +87,14 @@ class MCPClient:
                 tool_name = tool_call.function.name
                 tool_args = json.loads(tool_call.function.arguments)
 
-                # Execute tool
-                result = await self.session.call_tool(tool_name, tool_args)
-                final_text.append(f"[Calling tool {tool_name} with args {tool_args}]")
+                # Check with GeminiGuard before execution
+                if self.guard and not await self.guard.check(tool_name, tool_args):
+                    final_text.append(f"[Tool call to {tool_name} rejected by GeminiGuard]")
+                    continue  # Skip to the next tool call
 
-                # Monitor tool call with GeminiGuard
-                if self.guard:
-                    event = {
-                        "tool": tool_name,
-                        "input": tool_args,
-                        "output": str(result.content[0].text)  # or parse JSON if structured
-                    }
-                    await self.guard.monitor_event(event)
+                # Execute tool
+                final_text.append(f"[Calling tool {tool_name} with args {tool_args}]")
+                result = await self.session.call_tool(tool_name, tool_args)
 
                 # Add assistant message and tool result to history
                 self.messages.append({

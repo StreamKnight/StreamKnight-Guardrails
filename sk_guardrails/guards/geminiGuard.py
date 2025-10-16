@@ -1,3 +1,5 @@
+# guards/geminiGuard.py
+
 import asyncio
 import logging
 from typing import Dict, Any
@@ -26,32 +28,32 @@ class GeminiGuard:
         else:
             raise ValueError("Gemini API key not provided")
 
-    async def verify_tool_call(self, tool_name: str, input_data: Dict[str, Any], output_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def check_tool_usage(self, tool_name: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Ask Gemini if the tool was used correctly.
+        Ask Gemini if the proposed tool call is valid.
         """
         tool_info = next((t for t in self.tool_specs if t["name"] == tool_name), None)
         if not tool_info:
             return {"verdict": "fail", "reason": f"Unknown tool: {tool_name}"}
 
         prompt = f"""
-You are StreamKnight's verification AI.
+You are StreamKnight's validation AI. Your task is to determine if a proposed tool call is valid
+based on its definition.
+
 You are given the following information:
 ---
 Tool Name: {tool_name}
 Tool Description: {tool_info['description']}
 Tool Input Schema: {tool_info['input_schema']}
-Actual Input: {input_data}
-Actual Output: {output_data}
+Proposed Input: {input_data}
 ---
 
-Determine if:
-1. The input matches the tool's expected schema and purpose.
-2. The output logically aligns with what the tool claims to do.
-3. The tool appears to be used appropriately for the given intent.
+Based on the tool's schema and description, is the proposed input valid and appropriate?
+The input must satisfy the schema's requirements (e.g., types, required fields).
+The values provided should make sense for the tool's intended purpose.
 
 Respond in JSON with:
-{{"verdict": "pass|warn|fail", "reason": "<short reasoning>"}}
+{{"verdict": "pass|fail", "reason": "<short reasoning for failure>"}}
 """
 
         response = await self.client.aio.models.generate_content(
@@ -60,26 +62,24 @@ Respond in JSON with:
         )
 
         try:
-            result = eval(response.text)  # expecting JSON
-        except Exception:
-            result = {"verdict": "warn", "reason": "Invalid model response"}
+            # Use a safer method to parse JSON
+            import json
+            result = json.loads(response.text)
+        except (json.JSONDecodeError, TypeError):
+            result = {"verdict": "fail", "reason": "Invalid model response format"}
 
-        logger.info(f"Gemini verdict for {tool_name}: {result}")
+        logger.info(f"Gemini check for {tool_name}: {result}")
         return result
 
-    async def monitor_event(self, event):
+    async def check(self, tool_name: str, input_data: Dict[str, Any]) -> bool:
         """
-        Accept a structured event like:
-        {
-          "tool": "create_meeting",
-          "input": {...},
-          "output": {...}
-        }
+        Check if a tool call is valid. Returns True if the verdict is 'pass'.
         """
-        result = await self.verify_tool_call(event["tool"], event["input"], event["output"])
-        if result["verdict"] == "fail":
-            logger.warning(f"❌ Tool misuse detected: {result['reason']}")
-        elif result["verdict"] == "warn":
-            logger.warning(f"⚠️ Potential issue: {result['reason']}")
+        result = await self.check_tool_usage(tool_name, input_data)
+        if result.get("verdict") == "pass":
+            logger.info(f"✅ Gemini approved tool call: {tool_name}")
+            return True
         else:
-            logger.info(f"✅ Tool call verified successfully: {event['tool']}")
+            reason = result.get("reason", "No reason provided")
+            logger.warning(f"❌ Gemini rejected tool call: {tool_name}. Reason: {reason}")
+            return False
