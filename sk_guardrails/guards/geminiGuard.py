@@ -52,15 +52,16 @@ Based on the tool's schema and description, is the proposed input valid and appr
 The input must satisfy the schema's requirements (e.g., types, required fields).
 The values provided should make sense for the tool's intended purpose.
 
-Respond in JSON with:
-{{"verdict": "pass|fail", "reason": "<short reasoning for failure>"}}
+Respond PASS or FAIL:
+'PASS' or 'FAIL'
 """
 
         response = await self.client.aio.models.generate_content(
             model=self.gemini_model,
             contents=prompt
         )
-
+        print(response.text)
+        '''
         try:
             # Use a safer method to parse JSON
             import json
@@ -69,17 +70,20 @@ Respond in JSON with:
             result = {"verdict": "fail", "reason": "Invalid model response format"}
 
         logger.info(f"Gemini check for {tool_name}: {result}")
-        return result
+        '''
+
+        return response.text
+
 
     async def check(self, tool_name: str, input_data: Dict[str, Any]) -> bool:
         """
         Check if a tool call is valid. Returns True if the verdict is 'pass'.
         """
         result = await self.check_tool_usage(tool_name, input_data)
-        if result.get("verdict") == "pass":
+        if result == "PASS":
             logger.info(f"✅ Gemini approved tool call: {tool_name}")
             return True
         else:
-            reason = result.get("reason", "No reason provided")
-            logger.warning(f"❌ Gemini rejected tool call: {tool_name}. Reason: {reason}")
+            #reason = result.get("reason", "No reason provided")
+            #logger.warning(f"❌ Gemini rejected tool call: {tool_name}. Reason: {reason}")
             return False
