@@ -1,7 +1,7 @@
 # paper/utils/tool_planner.py
 import logging
 import json
-import tiktoken
+# tiktoken removed: relying on API source of truth
 from openai import AsyncOpenAI
 
 logger = logging.getLogger("tool_planner")
@@ -13,29 +13,10 @@ class ToolPlanner:
         self.api_key = api_key
         self.client = None
 
-        try:
-            self.encoding = tiktoken.encoding_for_model(openai_model)
-        except Exception:
-            self.encoding = tiktoken.get_encoding("cl100k_base")
-
     async def initialize(self):
         if not self.api_key:
             raise ValueError("OpenAI API key missing")
         self.client = AsyncOpenAI(api_key=self.api_key)
-
-    # ---------------------------
-    # Token counting helpers
-    # ---------------------------
-    def count_text_tokens(self, text: str) -> int:
-        return len(self.encoding.encode(text or ""))
-
-    def count_payload_tokens(self, messages):
-        payload = {
-            "model": self.openai_model,
-            "messages": messages
-        }
-        raw = json.dumps(payload, ensure_ascii=False)
-        return len(self.encoding.encode(raw))
 
     # ---------------------------
     # Build Tool Route (returns dict with metrics)
@@ -89,12 +70,8 @@ Example:
         # Build messages for OpenAI
         messages = [{"role": "user", "content": prompt}]
 
-        # Raw chars for debugging
+        # Raw chars for metadata/debugging (cheap len() check)
         raw_prompt_chars = len(prompt)
-
-        # Token estimate (input)
-        input_tokens = self.count_payload_tokens(messages)
-        logger.info(f"🟦 Planner input tokens: {input_tokens}")
 
         # ---- OpenAI call ----
         try:
@@ -107,12 +84,20 @@ Example:
             logger.error(f"❌ OpenAI planner error: {e}")
             return {
                 "route": [],
-                "input_tokens": input_tokens,
+                "input_tokens": 0,
                 "output_tokens": 0,
-                "total_tokens": input_tokens,
+                "total_tokens": 0,
                 "raw_prompt_chars": raw_prompt_chars,
                 "raw_response_chars": 0
             }
+
+        # Extract EXACT usage from API response
+        usage = getattr(resp, "usage", None)
+        input_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
+        output_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
+        total_tokens = input_tokens + output_tokens
+
+        logger.info(f"🟦 Planner usage: {input_tokens} in / {output_tokens} out")
 
         # Extract output text
         try:
@@ -123,15 +108,10 @@ Example:
 
         raw_response_chars = len(text)
 
-        # Token count for output text
-        output_tokens = self.count_text_tokens(text)
-        logger.info(f"🟥 Planner output tokens: {output_tokens}")
-
-        total_tokens = input_tokens + output_tokens
-        logger.info(f"🔢 Planner total tokens: {total_tokens}")
-
         # Parse route safely
         try:
+            # Ideally use json.loads, but keeping eval per your original logic
+            # to handle Python-style single quotes if the model outputs them.
             route = eval(text)
             if not isinstance(route, list):
                 raise ValueError("not a list")
