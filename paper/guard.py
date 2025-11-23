@@ -2,7 +2,6 @@
 
 import logging
 import json
-# tiktoken removed: relying on API source of truth
 from typing import Dict, Any
 from paper.utils.tool_inspector import get_mcp_tools
 from openai import AsyncOpenAI
@@ -31,9 +30,6 @@ class OpenAIGuard:
             raise ValueError("OpenAI API key missing for Guard")
 
         logger.info("🔍 Fetching MCP tools for Guard...")
-        # Assuming get_mcp_tools handles connection safely;
-        # if this requires the client session context, ensure it's passed correctly.
-        # For this snippet, we assume it works as imported.
         try:
             self.tool_specs = await get_mcp_tools(self.mcp_server_url)
             logger.info(f"Loaded {len(self.tool_specs)} tools from MCP.")
@@ -43,43 +39,40 @@ class OpenAIGuard:
         self.client = AsyncOpenAI(api_key=self.api_key)
 
     # ----------------------------------------------------------
-    # VALIDATION (returns dict with EXACT token metrics)
+    # VALIDATION (returns dict with EXACT token metrics + REASON)
     # ----------------------------------------------------------
     async def check_tool_usage(self, tool_name: str, input_data: Dict[str, Any]) -> dict:
         """
-        Returns structured dict with exact usage from API:
+        Returns structured dict with exact usage and FAILURE REASON:
         {
             "verdict": "PASS"/"FAIL",
+            "reason": "Explanation...",   <-- ADDED THIS
             "input_tokens": int,
             "output_tokens": int,
             "total_tokens": int,
-            "raw_prompt_chars": int,
-            "raw_response_chars": int
+            "raw": str                    <-- Raw response for debugging
         }
         """
 
         tool_info = next((t for t in self.tool_specs if t["name"] == tool_name), None)
 
-        # If tool definition not found, we can't validate schema, so FAIL safe.
+        # If tool definition not found, FAIL with specific reason.
         if not tool_info:
-            # If we have no info, we might check if it's because tool_specs is empty
-            # But generally safe to fail or pass depending on policy.
-            # Defaulting to FAIL as per original logic.
             return {
                 "verdict": "FAIL",
+                "reason": f"Tool definition for '{tool_name}' not found in Guard specs.",
                 "input_tokens": 0,
                 "output_tokens": 0,
                 "total_tokens": 0,
-                "raw_prompt_chars": 0,
-                "raw_response_chars": 0
+                "raw": "Tool not found"
             }
 
-        # Build validation prompt
+        # --- UPDATED PROMPT ---
+        # We explicitly ask for "FAIL: <Reason>"
         prompt = f"""
-        You are StreamKnight's validation AI. Your task is to determine if a proposed tool call is valid
-        based on its definition.
+        You are StreamKnight's security and schema validator. 
+        Analyze the proposed tool call against its definition.
 
-        You are given the following information:
         ---
         Tool Name: {tool_name}
         Tool Description: {tool_info.get('description', '')}
@@ -87,20 +80,17 @@ class OpenAIGuard:
         Proposed Input: {input_data}
         ---
 
-        Based on the tool's schema and description, is the proposed input valid and appropriate?
-        The input must satisfy the schema's requirements (e.g., types, required fields).
-        The values provided should make sense for the tool's intended purpose.
+        INSTRUCTIONS:
+        1. check if the input satisfies the strict schema types and requirements.
+        2. Check if the values are safe and appropriate for the tool's purpose.
 
-        Respond PASS or FAIL:
-        'PASS' or 'FAIL'
-"""
+        RESPONSE FORMAT:
+        If VALID: Respond with exactly "PASS"
+        If INVALID: Respond with "FAIL: <Short explanation of why it failed>"
+        """
 
         messages = [{"role": "user", "content": prompt}]
 
-        # Raw char count (cheap metric, not tokens)
-        raw_prompt_chars = len(prompt)
-
-        # Call OpenAI
         try:
             resp = await self.client.chat.completions.create(
                 model=self.openai_model,
@@ -111,52 +101,60 @@ class OpenAIGuard:
             logger.error(f"[Guard] OpenAI error: {e}")
             return {
                 "verdict": "FAIL",
+                "reason": f"OpenAI API Error: {str(e)}",
                 "input_tokens": 0,
                 "output_tokens": 0,
                 "total_tokens": 0,
-                "raw_prompt_chars": raw_prompt_chars,
-                "raw_response_chars": 0
+                "raw": str(e)
             }
 
-        # EXTRACT EXACT USAGE
+        # EXTRACT USAGE
         usage = getattr(resp, "usage", None)
         input_tokens = getattr(usage, "prompt_tokens", 0) if usage else 0
         output_tokens = getattr(usage, "completion_tokens", 0) if usage else 0
         total_tokens = input_tokens + output_tokens
 
-        # Process content
+        # --- PARSE REASONING ---
         text = resp.choices[0].message.content.strip()
-        raw_response_chars = len(text)
 
-        logger.info(f"[Guard] Usage: {input_tokens} in / {output_tokens} out")
-        logger.info(f"[Guard] Raw response: {text}")
+        verdict = "FAIL"
+        reason = text  # Default reason is the whole text
 
-        # Normalize
-        verdict_clean = text.upper().replace('"', '').replace("'", "").strip()
-        if verdict_clean.startswith("PASS"):
+        # Check strictly for PASS/FAIL prefix
+        if text.upper().startswith("PASS"):
             verdict = "PASS"
-        else:
+            reason = "Approved"
+        elif text.upper().startswith("FAIL"):
             verdict = "FAIL"
+            # Extract text after "FAIL:"
+            parts = text.split(":", 1)
+            if len(parts) > 1:
+                reason = parts[1].strip()
+            else:
+                reason = text  # Fallback if they forgot the colon
+
+        logger.info(f"[Guard] Verdict: {verdict} | Reason: {reason}")
 
         return {
             "verdict": verdict,
+            "reason": reason,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "total_tokens": total_tokens,
-            "raw_prompt_chars": raw_prompt_chars,
-            "raw_response_chars": raw_response_chars
+            "raw": text
         }
 
     # ----------------------------------------------------------
     # MAIN PUBLIC METHOD
     # ----------------------------------------------------------
     async def check(self, tool_name: str, input_data: Dict[str, Any]) -> bool:
-        """Returns True/False but still logs internally."""
+        """Returns True/False but logs the REASON on failure."""
         result = await self.check_tool_usage(tool_name, input_data)
 
         if result["verdict"] == "PASS":
             logger.info(f"✅ Guard APPROVED: {tool_name}")
             return True
 
-        logger.warning(f"❌ Guard REJECTED: {tool_name}")
+        # LOG THE REASON HERE
+        logger.warning(f"❌ Guard REJECTED: {tool_name} -> REASON: {result['reason']}")
         return False

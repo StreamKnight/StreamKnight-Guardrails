@@ -40,6 +40,16 @@ except Exception:
 # CONFIG: MCP SERVERS
 # ---------------------------
 KLAVIS_SERVERS = {
+    "gmail": "https://gmail-mcp-server.klavis.ai/mcp/?instance_id=e0ddd5ee-45fc-4791-b9f7-5a04d8a58463",
+    "github": "https://strata.klavis.ai/mcp/?instance_id=df9ad3af-9eb3-4287-b2f4-acbaa5db1138",
+    "linear": "https://linear-mcp-server.klavis.ai/mcp/?instance_id=8e711cd1-909a-4641-95e7-b3d5ee358110",
+    "gcalendar": "https://gcalendar-mcp-server.klavis.ai/mcp/?instance_id=9d9a4b34-d0c5-4b8e-b633-1aa101f57de6",
+    "gdrive": "https://gdrive-mcp-server.klavis.ai/mcp/?instance_id=ab124495-a682-407e-b9a2-d82bb8ab77d0",
+    "jira": "https://strata.klavis.ai/mcp/?instance_id=1c92c41b-f007-4c4b-81ab-be0a6be9b0aa",
+    "notion": "https://strata.klavis.ai/mcp/?instance_id=35468960-6bec-4581-b141-dccd41e87742",
+    "slack": "https://slack-mcp-server.klavis.ai/mcp/?instance_id=bfb2bca1-e73b-4c9d-9338-de1ecd35f4ea",
+    "attio": "https://attio-mcp-server.klavis.ai/mcp/?instance_id=82c94b49-2981-4ab2-9433-1f081a36f22c",
+    "hackerNews": "https://hacker-news-mcp-server.klavis.ai/mcp/?instance_id=000c2de5-7296-4417-97e2-6082e77a0050",
     "youtube": "https://youtube-mcp-server.klavis.ai/mcp/?instance_id=e5f0b026-f5db-402e-a6b6-62000d3444ab"
 }
 
@@ -562,8 +572,9 @@ class MultiMCPClient:
 
                 if not approved:
                     log.warning(f"Guard rejected {full_name}: {g_raw}")
+                    # --- UPDATE: Tell AI to retry on Guard fail ---
                     messages.append(
-                        {"role": "tool", "tool_call_id": tc_id, "content": f"Error: Guard rejected tool call: {g_raw}"})
+                        {"role": "tool", "tool_call_id": tc_id, "content": f"Error: Guard rejected tool call: {g_raw}. Please analyze the rejection reason and retry with corrected arguments."})
                     continue
 
                 log.info(f"Guard approved {full_name} (Guard Usage: {g_in}/{g_out})")
@@ -586,13 +597,16 @@ class MultiMCPClient:
                     result = await session.call_tool(tool_name, args)
                     sanitized = sanitize_tool_result(result, max_chars=8000)
                     log.info(f"Tool result length: {len(sanitized)} chars")
-                except Exception as e:
-                    sanitized = f"Tool execution error: {e}"
-                    log.error(sanitized)
+                    # Advance pointer ONLY on success
+                    messages.append({"role": "tool", "tool_call_id": tc_id, "content": sanitized})
+                    pointer.advance()
+                    log.info(f"Advanced plan pointer to step {pointer.step}")
 
-                messages.append({"role": "tool", "tool_call_id": tc_id, "content": sanitized})
-                pointer.advance()
-                log.info(f"Advanced plan pointer to step {pointer.step}")
+                except Exception as e:
+                    # --- UPDATE: Tell AI to retry on Execution fail ---
+                    sanitized = f"Tool execution error: {e}. Please analyze the error and retry."
+                    log.error(sanitized)
+                    messages.append({"role": "tool", "tool_call_id": tc_id, "content": sanitized})
 
             step_idx += 1
 
