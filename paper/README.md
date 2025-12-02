@@ -2,6 +2,9 @@
 
 **StreamKnight** is a custom guardrail architecture designed for the Model Context Protocol (MCP). It addresses the high token overhead and reliability issues encountered when AI models interact with multiple MCP servers. By implementing a "Stream Tool Injection and Monitoring" technique, StreamKnight constructs explicit tool routes and monitors execution in real-time.
 
+Research Code - research.py
+Normal Code - normal.py
+
 ## 🚀 Key Features
 
   * **Token Optimization:** Reduces token consumption by **65% to 88%** depending on the number of MCP servers used.
