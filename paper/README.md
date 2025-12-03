@@ -84,9 +84,7 @@ In controlled tests where models were intentionally instructed to use wrong argu
   * **Paper/Repository:** [StreamKnight GitHub](https://github.com/StreamKnight/StreamKnight-Guardrails/tree/main/paper)
   * **Evaluation Data:** [Raw Data Sheet](https://docs.google.com/spreadsheets/d/122D9rTQx44gKXrZxSSvdgm4wLoiyUBNopyGlkK761Y8/edit?usp=sharing)
 
-## 👥 Authors
-
-Department of Computer Science and Engineering, Ajay Kumar Garg Engineering College:
+## 👥 Authors:
 
   * **Mayank Singh Jadon** - mayank.msj.singh@gmail.com
   * **Krishna Nishad** - krishnanishad52513@gmail.com
